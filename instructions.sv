@@ -1,7 +1,7 @@
 task ADC();
 	// Add Memory to Accumulator with Carry (A + M + C -> A,C) [N,Z,C,V]
 	ALU_A <= ACC;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	SUM_en <= 1'b1;
 	ALU_CIN <= STAT[0];
 	ACC_SAVE <= 1'b1;
@@ -13,13 +13,13 @@ endtask
 task AND();
 	// AND Memory with Accumulator (A AND M -> A) [N,Z]
 	ALU_A <= ACC;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	AND_en <= 1'b1;
 	ACC_SAVE <= 1'b1;
 	
 	// STAT bits for AND opcode are set a cycle early
-	STAT[1] <= (ACC & D_BUS) == 0 ? 1'b1 : 1'b0; // Z
-	STAT[7] <= (ACC[7] & D_BUS[7]); // N
+	STAT[1] <= (ACC & DB_READ) == 0 ? 1'b1 : 1'b0; // Z
+	STAT[7] <= (ACC[7] & DB_READ[7]); // N
 endtask
 
 task ASL_A();
@@ -35,7 +35,7 @@ endtask
 
 task ASL();
 	// Shift Left One Bit (Memory)
-	ALU_A <= D_BUS;
+	ALU_A <= DB_READ;
 	ASL_en <= 1'b1;
 		
 	UPDATE_NZ <= 1'b1;
@@ -86,18 +86,18 @@ endtask
 
 task BIT();
 	// Test Bits in Memory with Accumulator (A AND M, M7 - N, M6 -> V)[N,Z,V]
-	STAT[7] <= D_BUS[7];
-	STAT[6] <= D_BUS[6];
+	STAT[7] <= DB_READ[7];
+	STAT[6] <= DB_READ[6];
 	
 	ALU_A <= ACC;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	AND_en <= 1'b1;
 	
 	UPDATE_Z <= 1'b1;
 endtask
 
 task BRK();
-	// Force Break
+	// Force Break, Interrupts
 	case(I_C)
 		4'd0: begin
 			increment_pc();
@@ -125,22 +125,46 @@ task BRK();
 			A_BUS <= {8'h01, ABL_HOLD};
 			ABL_HOLD <= ABL_HOLD - 1;
 			
-			
-			DB_WRITE <= {STAT[7:6], 2'b11, STAT[3:0]};
-			
+
+			case (INTERRUPT_TYPE)
+				// NMI and IRQ disable further IRQ until RTI is called
+				NMI_INT,
+				IRQ_INT:
+					DB_WRITE <= {STAT[7:6], 2'b10, STAT[3:0]};
+					
+				NO_INT:
+					DB_WRITE <= {STAT[7:6], 2'b11, STAT[3:0]};
+			endcase
 			
 			I_C <= I_C + 1;
 		end
 		4'd4: begin
 			// Finish writing, update stack pointer
-			A_BUS <= 16'hFFFE;
+			case (INTERRUPT_TYPE)
+				NMI_INT:
+					A_BUS <= 16'hFFFA;
+					
+				IRQ_INT,
+				NO_INT:
+					A_BUS <= 16'hFFFE;
+			
+			endcase
+			
 			RW <= 1'b1;
 			SP <= A_BUS[7:0] - 1;
 			I_C <= I_C + 1;
 		end
 		4'd5: begin
 			// Fetch interrupt PCL
-			A_BUS <= 16'hFFFF;
+			case(INTERRUPT_TYPE)
+				NMI_INT:
+					A_BUS <= 16'hFFFB;
+					
+				IRQ_INT,
+				NO_INT:
+					A_BUS <= 16'hFFFF;
+			endcase
+			
 			ABL_HOLD <= DB_READ;
 			I_C <= I_C + 1;
 		end
@@ -178,7 +202,7 @@ endtask
 task CMP();
 	// Compare Memory with Accumulator (A - M)[N,Z,C]
 	ALU_A <= ACC;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	SUM_en <= 1'b1;
 	INV_en <= 1'b1;
 	ALU_CIN <= 1'b1;
@@ -191,7 +215,7 @@ endtask
 task CPX();
 	// Compare Memory and Index X (X - M)[N,Z,C]
 	ALU_A <= X;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	SUM_en <= 1'b1;
 	INV_en <= 1'b1;
 	ALU_CIN <= 1'b1;
@@ -203,7 +227,7 @@ endtask
 task CPY();
 	// Compare Memory and Index Y (Y - M)[N,Z,C]
 	ALU_A <= Y;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	SUM_en <= 1'b1;
 	INV_en <= 1'b1;
 	ALU_CIN <= 1'b1;
@@ -214,7 +238,7 @@ endtask
 
 task DEC();
 	// Decrement Memory by One (M - 1 -> M)[N,Z]
-	ALU_A <= D_BUS;
+	ALU_A <= DB_READ;
 	ALU_B <= 8'd1;
 	
 	SUM_en <= 1'b1;
@@ -246,7 +270,7 @@ endtask
 task EOR();
 	// Exclusive-OR Memory with Accumulator (A EOR M -> A) [N,Z]	
 	ALU_A <= ACC;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	EOR_en <= 1'b1;
 	ACC_SAVE <= 1'b1;
 	UPDATE_NZ <= 1'b1;
@@ -254,7 +278,7 @@ endtask
 
 task INC();
 	// Increment Memory by One (M + 1 -> M)[N,Z]
-	ALU_A <= D_BUS;
+	ALU_A <= DB_READ;
 	ALU_B <= 8'd1;
 	
 	SUM_en <= 1'b1;
@@ -295,12 +319,12 @@ task JMP();
 			A_BUS <= PC + 1;
 			I_C <= I_C + 1;
 			
-			ABL_HOLD <= D_BUS;
+			ABL_HOLD <= DB_READ;
 		end
 		4'd2: begin
-			A_BUS <= {D_BUS, ABL_HOLD};
+			A_BUS <= {DB_READ, ABL_HOLD};
 			PCL <= ABL_HOLD;
-			PCH <= D_BUS;
+			PCH <= DB_READ;
 			if (OP_CODE == 8'h4C) begin
 				// abs
 				next_instruction();
@@ -310,15 +334,15 @@ task JMP();
 			end
 		end
 		4'd3: begin
-			ABL_HOLD <= D_BUS;
+			ABL_HOLD <= DB_READ;
 			increment_pc();
 			A_BUS <= PC + 1;
 			I_C <= I_C + 1;
 		end
 		4'd4: begin
 			PCL <= ABL_HOLD;
-			PCH <= D_BUS;
-			A_BUS <= {D_BUS, ABL_HOLD};
+			PCH <= DB_READ;
+			A_BUS <= {DB_READ, ABL_HOLD};
 			next_instruction();
 		end
 	endcase
@@ -335,7 +359,7 @@ task JSR();
 		4'd1: begin
 			increment_pc();
 			A_BUS <= {8'h01, SP};
-			SP <= D_BUS;
+			SP <= DB_READ;
 			I_C <= I_C + 1;
 		end
 		4'd2: begin
@@ -355,8 +379,8 @@ task JSR();
 			I_C <= I_C + 1;
 		end
 		4'd5: begin
-			A_BUS <= {D_BUS, SP};
-			PCH <= D_BUS;
+			A_BUS <= {DB_READ, SP};
+			PCH <= DB_READ;
 			PCL <= SP;
 			SP <= ABL_HOLD - 1'b1;
 			next_instruction();
@@ -366,20 +390,20 @@ endtask
 
 task LDX();
 	// Load Index X with Memory (M -> X) [N,Z]
-	X <= D_BUS;
-	update_nz_flags(D_BUS);
+	X <= DB_READ;
+	update_nz_flags(DB_READ);
 endtask
 	
 task LDY();
 	// Load Index Y with Memory (M -> Y) [N,Z]
-	Y <= D_BUS;
-	update_nz_flags(D_BUS);
+	Y <= DB_READ;
+	update_nz_flags(DB_READ);
 endtask
 
 task LDA();
 	// Load Accumulator with Memory (M -> A) [N,Z]
-	ACC <= D_BUS;
-	update_nz_flags(D_BUS);
+	ACC <= DB_READ;
+	update_nz_flags(DB_READ);
 endtask
 
 task LSR_A();
@@ -410,7 +434,7 @@ endtask
 task ORA();
 	// OR Memory with Accumulator (A OR M -> A) [N,Z] 
 	ALU_A <= ACC;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	OR_en <= 1'b1;
 	ACC_SAVE <= 1'b1;
 	UPDATE_NZ <= 1'b1;
@@ -450,9 +474,9 @@ task PLA();
 		A_BUS <= A_BUS + 1'd1;
 		SP <= SP + 1'd1;
 	end else if (I_C == 3) begin
-		ACC <= D_BUS;
+		ACC <= DB_READ;
 		A_BUS <= PC;
-		update_nz_flags(D_BUS);
+		update_nz_flags(DB_READ);
 	end
 endtask	
 	
@@ -464,7 +488,7 @@ task PLP();	// Pull Processor Status from Stack [N,Z,C,I,D,V]
 		SP <= SP + 1'd1;
 	end else if (I_C == 3) begin
 
-		STAT <= {D_BUS[7:6], STAT[5:4], D_BUS[3:0]};
+		STAT <= {DB_READ[7:6], STAT[5:4], DB_READ[3:0]};
 		A_BUS <= PC;
 	end
 endtask
@@ -540,7 +564,7 @@ task RTI();
 			A_BUS <= {8'h01, ABL_HOLD};
 			ABL_HOLD <= ABL_HOLD + 1;
 			I_C <= I_C + 1;
-			STAT <= {DB_READ[7:6], 1'b0, DB_READ[4:0]}; // Clear 5th bit
+			STAT <= {DB_READ[7:6], 1'b0, DB_READ[4:0]}; // Clear the unused 5th bit
 		end
 		4'd4: begin
 			A_BUS <= {8'h01, ABL_HOLD};
@@ -549,6 +573,7 @@ task RTI();
 			I_C <= I_C + 1;
 		end
 		4'd5: begin
+			STAT[2] <= 1'b0; // Re-enable interrupts
 			A_BUS <= {DB_READ, ABL_HOLD};
 			PCL <= ABL_HOLD;
 			PCH <= DB_READ;
@@ -567,23 +592,23 @@ task RTS();
 		end
 		4'd1: begin
 			increment_pc();
-			A_BUS <= {01, SP};
+			A_BUS <= {8'h01, SP};
 			I_C <= I_C + 1;
 		end
 		4'd2: begin
-			ABL_HOLD <= D_BUS;
+			ABL_HOLD <= DB_READ;
 			A_BUS <= A_BUS + 1;
 			I_C <= I_C + 1;
 		end
 		4'd3: begin
 			A_BUS <= A_BUS + 1;
 			SP <= A_BUS[7:0] + 1;
-			PCL <= D_BUS;
+			PCL <= DB_READ;
 			I_C <= I_C + 1;
 		end
 		4'd4: begin
-			PCH <= D_BUS;
-			A_BUS <= {D_BUS, PCL};
+			PCH <= DB_READ;
+			A_BUS <= {DB_READ, PCL};
 			I_C <= I_C + 1;
 		end
 		4'd5: begin
@@ -597,7 +622,7 @@ endtask
 task SBC();
 	// Subtract Memory from Accumulator with Borrow (A - M - !C -> A) [N,Z,C,V]
 	ALU_A <= ACC;
-	ALU_B <= D_BUS;
+	ALU_B <= DB_READ;
 	SUM_en <= 1'b1;
 	INV_en <= 1'b1;
 	ACC_SAVE <= 1'b1;

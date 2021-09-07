@@ -1,3 +1,7 @@
+// CPU_6502.sv
+// 
+// TODO
+// - Test NMI, IRQ and RTI functionality
 
 module CPU_6502(
 
@@ -15,14 +19,24 @@ module CPU_6502(
 	input IRQ,
 	input NMI,
 
-	output reg RW, // Read/Write pin
-	output reg SYNC
+	output reg RW,
+	output reg SYNC,
+	
+	// Debug wires
+	output [15:0] PC_DBG, 
+	output [7:0] X_DBG,
+	output [7:0] Y_DBG, 
+	output [7:0] ACC_DBG, 
+	output [7:0] STAT_DBG, 
+	output [7:0] OP_CODE_DBG, 
+	output [3:0] I_C_DBG
+	
 );
 
 initial RW = 1'b1;
 initial SYNC = 1'b0;
 
-wire [7:0] DB_READ;
+reg [7:0] DB_READ;
 reg [7:0] DB_WRITE;
 
 // RW pin low, CPU controls data bus
@@ -63,22 +77,12 @@ localparam S_STARTUP = 2'b00;
 localparam S_RUNNING = 2'b01;
 reg [1:0] STATE = S_STARTUP;
 
-reg NMI_WAITING = 1'b0;
-reg IRQ_WAITING = 1'b0;
-localparam S_I_NONE = 2'd0;
-localparam S_I_IRQ = 2'd1;
-localparam S_I_NMI = 2'd2;
-reg [1:0] INTERRUPT_STATE = S_I_NONE;
-
-// OPCODE wires
-wire [7:0] OP_CODE;
+// OP_CODE Instruction Register
+reg [7:0] OP_CODE;
 wire [2:0] OP_HIGH;
 wire [2:0] OP_MID;
 wire [1:0] OP_LOW;
 
-// At I_C==0, Instruction is still yet to be moved into the instruction register
-// so the instruction should be read from databus.
-assign OP_CODE = I_C ? IR : D_BUS;
 assign OP_HIGH = OP_CODE[7:5];
 assign OP_MID = OP_CODE[4:2];
 assign OP_LOW = OP_CODE[1:0];
@@ -88,49 +92,63 @@ reg SUM_en, AND_en, EOR_en, OR_en, ASL_en, LSR_en, INV_en, ROL_en, ROR_en, CMP_e
 reg ALU_CIN;
 reg [7:0] ALU_A;
 reg [7:0] ALU_B;
-wire [7:0] ALU_OUT;  // The output of the ALU
+wire [7:0] ALU_OUT;
 wire ALU_COUT, ALU_OVERFLOW;
 
+// Branching
 reg BRANCH_TAKEN;
 
+// Interrupts
+localparam NO_INT = 2'b00;
+localparam NMI_INT = 2'b01;
+localparam IRQ_INT = 2'b10;
+
+wire NMI_TRIGGERED;
+reg NMI_RESET = 1'b0;
+reg [1:0] INTERRUPT_TYPE = NO_INT;
+
+// Debug Wire Assignments
+assign PC_DBG = PC;
+assign X_DBG = X;
+assign Y_DBG = Y;
+assign ACC_DBG = ACC;
+assign STAT_DBG = STAT;
+assign OP_CODE_DBG = OP_CODE;
+assign I_C_DBG = I_C;
+
+// Instruction logic
 `include "instructions.sv"
 
-task reset_cpu;
-	STATE <= S_STARTUP;
-	I_C <= 8'b0;
+// Next instruction and interrupt handling
+always @(negedge clk) begin
+	if(I_C == 0) begin
+		// On a new instruction...
 	
-	// Reset kinda dangerous since CPU
-	// could be performing a write at the same time
-	RW <= 1'b1;
-	
-	// Reset index registers
-	X <= 8'b0;
-	Y <= 8'b0;
-	ACC <= 8'b0;
-	STAT <= 8'h16;
-	SP <= 8'hFD;
-	
-	// Reset ALU
-	ALU.reset();
-	ALU_A <= 8'b0;
-	ALU_B <= 8'b0;
-	ALU_CIN <= 1'b0;
-	UPDATE_NZ = 1'b0;
-	UPDATE_Z = 1'b0;
-	UPDATE_CARRY = 1'b0;
-	UPDATE_OVF = 1'b0;
+		if (NMI_TRIGGERED) begin
+			NMI_RESET <= 1'b1; // Acknowledge the NMI
+			OP_CODE <= 8'h00; // BRK
+			INTERRUPT_TYPE <= NMI_INT;
+			STAT[2] <= 1'b1; // Disable further IRQs
+		
+		end else if (IRQ == 1'b0 && STAT[2] == 1'b0) begin
+			OP_CODE <= 8'h00; // BRK
+			INTERRUPT_TYPE <= IRQ_INT;
+			STAT[2] <= 1'b1; // Disable further IRQs
+			
+		end else
+			// Next instruction should be the one on the DataBus
+			OP_CODE <= DB_READ;
+			INTERRUPT_TYPE <= NO_INT;
 
-endtask
+	end
+	
+end
 
-// TODO
-// register interrupts - done
-// handle interrupts in BRK instruction
-// make sure interrupt does not trigger again till RTI is executed
 
 always @(posedge clk, negedge rst_n) begin
 	
 	if(!rst_n)
-		reset_cpu();
+		cpu_reset();
 	else if (clk) begin
 	
 		case(STATE)
@@ -142,13 +160,13 @@ always @(posedge clk, negedge rst_n) begin
 						I_C++;
 					end
 					4'd1: begin
-						PCL <= D_BUS;
+						PCL <= DB_READ;
 						A_BUS <= 16'hFFFD;
 						I_C++;
 					end
 					4'd2: begin
-						PCH <= D_BUS;
-						A_BUS <= {D_BUS, PCL};
+						PCH <= DB_READ;
+						A_BUS <= {DB_READ, PCL};
 						STATE <= S_RUNNING;
 						next_instruction();
 
@@ -156,36 +174,30 @@ always @(posedge clk, negedge rst_n) begin
 				endcase
 			end
 			S_RUNNING: begin
-				// At the beginning of every instruction
-				// Load the instruction into the instruction register, pulse SYNC pin
-				// Save result of ALU (if there was one)
+				// Reload the NMI falling-edge detector
+				NMI_RESET <= 1'b0;
 				
 				if (RW)
 						DB_WRITE <= DB_READ;
 				
-				if(I_C == 4'b0) begin
-					IR <= D_BUS;
-					
+				if(I_C == 4'b0) begin					
+					// At the beginning of every instruction					
 					
 					SYNC <= 1'b0;
 					BRANCH_TAKEN <= 1'b0;
-					ALU.reset();
+					alu_reset();
 									
 					// To mimic the behaviour of the 6502, 
 					// ALU results are delayed by one clock cycle
 					save_alu_result();
 					update_flags();
-					
-					
 				end
 				
 				
 				
 				// OPCODES are organized into addressing mode
 				// with the exception of unique opcodes
-				
-				// BRK, IRQ, NMI, all handled with same instruction but different address vectors
-				if (OP_CODE == 8'h00 || NMI_WAITNG || IRQ_WAITING) begin
+				if (OP_CODE == 8'h00) begin
 					BRK();
 				end else if (OP_CODE == 8'h20) begin
 					JSR();
@@ -277,7 +289,9 @@ always @(posedge clk, negedge rst_n) begin
 				else
 					// Any instruction executed that is not valid is
 					// interpreted as a NOP instruction
-					NOP();
+					OP_CODE <= 8'hEA;
+					handle_immediate();
+					
 				
 			end
 		endcase
@@ -285,7 +299,6 @@ always @(posedge clk, negedge rst_n) begin
 end
 
 task handle_implied;
-begin
 	case(I_C)
 		4'd0: begin
 			increment_pc();
@@ -366,11 +379,9 @@ begin
 			endcase
 		end
 	endcase
-end
 endtask
 
 task handle_immediate;
-begin
 	case(I_C)
 		4'd0: begin
 			increment_pc();
@@ -380,7 +391,6 @@ begin
 		end
 		4'd1: begin
 			
-			// All immediate commands take only 1 clock cycles to complete
 			case(OP_CODE)
 				
 				8'hC0: CPY();
@@ -405,11 +415,9 @@ begin
 		
 		end
 	endcase
-end 
 endtask
 
 task handle_zeropage;
-begin
 	case(I_C)
 		4'd0: begin
 			//
@@ -420,7 +428,7 @@ begin
 		4'd1: begin
 			// Set Address Bus to Operand location
 			increment_pc();
-			A_BUS <= {8'b0, D_BUS};
+			A_BUS <= {8'b0, DB_READ};
 			
 			if(OP_MID == 3'd1) begin
 				// Non-indexed
@@ -438,9 +446,9 @@ begin
 				end
 				
 			end else begin
-				// Indexed - Add either X or Y register to D_BUS via the ALU
+				// Indexed - Add either X or Y register to DB_READ via the ALU
 				I_C <= I_C + 1;
-				ALU_A <= D_BUS;
+				ALU_A <= DB_READ;
 				
 				// STX, LDX opcodes indexed with Y
 				if (OP_CODE == 8'h96 || OP_CODE == 8'hB6)
@@ -457,7 +465,7 @@ begin
 		
 		4'd2: begin
 			SUM_en <= 1'b0;
-			// Take the result of the ALU and set it to the D_BUS
+			// Take the result of the ALU and set it to the DB_READ
 			A_BUS <= {8'b0, ALU_OUT};
 			I_C <= I_C + 1;
 			if(OP_HIGH == 3'd4)
@@ -559,7 +567,6 @@ begin
 		end
 		
 	endcase
-end
 endtask
 
 task handle_absolute;
@@ -786,10 +793,10 @@ task handle_indexed_indirect;
 		end
 		4'd1: begin
 			increment_pc();
-			A_BUS <= {8'b0, D_BUS};
+			A_BUS <= {8'b0, DB_READ};
 			I_C <= I_C + 1;
 			
-			ALU_A <= D_BUS;
+			ALU_A <= DB_READ;
 			ALU_B <= X;
 			
 			SUM_en <= 1'b1;
@@ -805,12 +812,12 @@ task handle_indexed_indirect;
 		end
 		4'd3: begin
 			A_BUS <= {8'b0, ALU_OUT};
-			ABL_HOLD <= D_BUS;
+			ABL_HOLD <= DB_READ;
 			SUM_en <= 1'b0;
 			I_C <= I_C + 1;
 		end
 		4'd4: begin
-			A_BUS <= {D_BUS, ABL_HOLD};
+			A_BUS <= {DB_READ, ABL_HOLD};
 			
 			if(OP_CODE == 8'h81) begin
 				RW <= 1'b0;
@@ -847,9 +854,9 @@ task handle_indirect_indexed;
 		4'd1: begin
 			// Fetch zeropage index
 			increment_pc();
-			A_BUS <= {8'b0, D_BUS};
+			A_BUS <= {8'b0, DB_READ};
 			
-			ALU_A <= D_BUS;
+			ALU_A <= DB_READ;
 			ALU_B <= 1;
 			
 			SUM_en <= 1'b1;
@@ -859,13 +866,13 @@ task handle_indirect_indexed;
 		4'd2: begin
 			// Fetch low byte, add Y index to it
 			A_BUS <= {8'b0, ALU_OUT};
-			ALU_A <= D_BUS;
+			ALU_A <= DB_READ;
 			ALU_B <= Y;
 			I_C <= I_C + 1;
 		end
 		4'd3: begin
 			// Fetch high byte, check for carry from low byte, add to high byte
-			A_BUS <= {D_BUS, ALU_OUT};
+			A_BUS <= {DB_READ, ALU_OUT};
 			
 			// If is read operation and cout is 0
 			if (OP_CODE != 8'h91 && ALU_COUT == 1'b0) begin
@@ -873,7 +880,7 @@ task handle_indirect_indexed;
 				SUM_en <= 1'b0;
 			end else begin
 				I_C <= I_C + 1;
-				ALU_A <= D_BUS;
+				ALU_A <= DB_READ;
 				ALU_B <= ALU_COUT;
 			end
 		end
@@ -969,32 +976,34 @@ endtask
 
 task decide_branch(input take_branch);
 	if (take_branch) begin
+		
+		// Add operand to PCL
+		// Acts as PC increment
 		ALU_A <= PCL;
 		ALU_B <= DB_READ;
 
-		SUM_en <= 1'b1; // Add operand to PCL
-		ALU_CIN <= 1'b1; // Acts as PC increment
+		SUM_en <= 1'b1; 
+		ALU_CIN <= 1'b1; 
 		
 		I_C <= I_C + 1;
 		
 	end else begin
+		// Branch was not taken, go to the next instruction
 		next_instruction();
 		
 	end
 endtask
 
 task increment_pc;
-begin
 	PCL++;
 	if (PCL == 8'hFF)
 		PCH++;
-end
 endtask
 
 task update_flags;
-	// Normally, the instruction sets which flags need to be updated
-	// to emulate the 6502, the relevant flags are updated one clock 
-	// cycle after.
+	// Normally, the instruction sets which flags need to be updated.
+	// To emulate the 6502, the relevant flags are updated the next 
+	// clock cycle.
 	if (UPDATE_NZ)
 	begin
 		UPDATE_NZ <= 1'b0;
@@ -1021,28 +1030,25 @@ task update_flags;
 endtask
 
 task update_nz_flags(input [7:0] i);
-begin
-	// Updates the Negative & Zero flags
+	// Update the Negative & Zero flags
 	STAT[1] <= i == 0 ? 1'd1 : 1'd0; // Zero Flag
 	STAT[7] <= i[7] == 1'b1; // Negative Flag
-end
 endtask
 
 task update_z_flag();
+	// Update Zero flag
 	STAT[1] <= ALU_OUT == 0 ? 1'd1: 1'd0;
 
 endtask
 
 task update_c_flag();
-begin
+	// Update Carry flag
 	STAT[0] <= ALU_COUT;
-end 
 endtask
 
 task update_ovf_flag();
-begin
+	// Update Overflow flag
 	STAT[6] <= ALU_OVERFLOW;
-end
 endtask
 
 task save_alu_result;
@@ -1063,10 +1069,48 @@ task save_alu_result;
 endtask
 
 task next_instruction();
-begin
 	I_C <= 0;
 	SYNC <= 1'b1;
-end
+endtask
+
+task alu_reset;
+	SUM_en <= 1'b0;
+	AND_en <= 1'b0;
+	EOR_en <= 1'b0;
+	OR_en  <= 1'b0;
+	ASL_en <= 1'b0;
+	LSR_en <= 1'b0;
+	INV_en <= 1'b0;
+	ROL_en <= 1'b0;
+	ROR_en <= 1'b0;
+	ALU_CIN <= 1'b0;
+endtask
+
+task cpu_reset;
+	STATE <= S_STARTUP;
+	I_C <= 8'b0;
+	
+	// Reset kinda dangerous since CPU
+	// could be performing a write at the same time
+	RW <= 1'b1;
+	
+	// Reset index registers
+	X <= 8'b0;
+	Y <= 8'b0;
+	ACC <= 8'b0;
+	STAT <= 8'h16;
+	SP <= 8'hFD;
+	
+	// Reset ALU
+	ALU.reset();
+	ALU_A <= 8'b0;
+	ALU_B <= 8'b0;
+	ALU_CIN <= 1'b0;
+	UPDATE_NZ = 1'b0;
+	UPDATE_Z = 1'b0;
+	UPDATE_CARRY = 1'b0;
+	UPDATE_OVF = 1'b0;
+
 endtask
 
 ALU ALU
@@ -1088,11 +1132,11 @@ ALU ALU
    .OVFout(ALU_OVERFLOW)
 );
 
-falling_edge_detector NMI_INT (
-	.trigger(trigger),
-	.clear(clear),
+falling_edge_detector NMI_INTERRUPT (
+	.trigger(NMI),
+	.clear(NMI_RESET),
 	
-	.out(out)
+	.out(NMI_TRIGGERED)
 );
 
 
