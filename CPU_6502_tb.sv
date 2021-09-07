@@ -1,7 +1,7 @@
 module CPU_6502_tb ();
 
 reg clk = 1'b0;
-reg rst = 1'b1;
+reg rst_n = 1'b1;
 
 //inout [7:0] data_bus;
 //wire [7:0] data_bus_read;
@@ -13,7 +13,6 @@ reg rst = 1'b1;
 wire [15:0] address_bus;
 wire [7:0] data_bus;
 
-wire rdy; // Ready
 wire RW;  // Read/Write
 wire sync;
 
@@ -79,15 +78,24 @@ end
 
 CPU_6502 UUT
 (
-	.clk(clk) ,	// input  clk_sig
-	.rst(rst) ,	// input  rst_sig
-	.D_BUS(data_bus) ,	// input [7:0] DB_sig
-	.A_BUS(address_bus) ,	// output [15:0] AB_sig
-	.RDY(rdy) ,	// input  RDY_sig
-	.SYNC(sync) ,	// input  RES_sig
-	.IRQ(irq) ,	// input  IRQ_sig
-	.NMI(nmi) ,	// input  NMI_sig
-	.RW(RW)	// output  RW_sig
+	.clk(clk) ,
+	.rst_n(rst_n),
+	.D_BUS(data_bus),
+	.A_BUS(address_bus),
+	.SYNC(sync),
+	.IRQ(irq),
+	.NMI(nmi),
+	.RW(RW),
+	
+	
+	// 6502 Debug Pins
+	.PC_DBG(), 
+	.X_DBG(),
+	.Y_DBG(), 
+	.ACC_DBG(), 
+	.STAT_DBG(), 
+	.OP_CODE_DBG(), 
+	.I_C_DBG()
 );
 
 

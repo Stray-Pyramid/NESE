@@ -1102,7 +1102,7 @@ task cpu_reset;
 	SP <= 8'hFD;
 	
 	// Reset ALU
-	ALU.reset();
+	alu_reset();
 	ALU_A <= 8'b0;
 	ALU_B <= 8'b0;
 	ALU_CIN <= 1'b0;
