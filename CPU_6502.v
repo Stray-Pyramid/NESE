@@ -1,4 +1,4 @@
-// CPU_6502.sv
+// CPU_6502.v
 // 
 // TODO
 // - Test NMI, IRQ and RTI functionality
