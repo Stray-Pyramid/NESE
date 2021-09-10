@@ -2,8 +2,6 @@
 // 
 // TODO
 // - Test NMI, IRQ and RTI functionality
-// - Add  cases to all case statements
-// - change back to verilog
 
 module CPU_6502(
 
