@@ -1,5 +1,6 @@
 *
 !*.v
+*inst.v
 !*.bsf
 !*/
 !.gitignore

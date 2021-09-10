@@ -28,6 +28,7 @@ module CPU_6502(
 	output [7:0] Y_DBG, 
 	output [7:0] ACC_DBG, 
 	output [7:0] STAT_DBG, 
+	output [7:0] SP_DBG,
 	output [7:0] OP_CODE_DBG, 
 	output [2:0] I_C_DBG
 	
@@ -107,6 +108,7 @@ assign X_DBG = X;
 assign Y_DBG = Y;
 assign ACC_DBG = ACC;
 assign STAT_DBG = STAT;
+assign SP_DBG = SP;
 assign OP_CODE_DBG = OP_CODE;
 assign I_C_DBG = I_C;
 

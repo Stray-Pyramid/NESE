@@ -4,7 +4,7 @@ editor if you plan to continue editing the block that represents it in
 the Block Editor! File corruption is VERY likely to occur.
 */
 /*
-Copyright (C) 2020  Intel Corporation. All rights reserved.
+Copyright (C) 2019  Intel Corporation. All rights reserved.
 Your use of Intel Corporation's design tools, logic functions 
 and other software and tools, and any partner logic 
 functions, and any output files from any of the foregoing 
@@ -111,16 +111,23 @@ https://fpgasoftware.intel.com/eula.
 	(port
 		(pt 216 176)
 		(output)
-		(text "OP_CODE_DBG[7..0]" (rect 0 0 93 12)(font "Arial" ))
-		(text "OP_CODE_DBG[7..0]" (rect 102 171 195 183)(font "Arial" ))
+		(text "SP_DBG[7..0]" (rect 0 0 57 12)(font "Arial" ))
+		(text "SP_DBG[7..0]" (rect 138 171 195 183)(font "Arial" ))
 		(line (pt 216 176)(pt 200 176)(line_width 3))
 	)
 	(port
 		(pt 216 192)
 		(output)
-		(text "I_C_DBG[2..0]" (rect 0 0 61 12)(font "Arial" ))
-		(text "I_C_DBG[2..0]" (rect 134 187 195 199)(font "Arial" ))
+		(text "OP_CODE_DBG[7..0]" (rect 0 0 93 12)(font "Arial" ))
+		(text "OP_CODE_DBG[7..0]" (rect 102 187 195 199)(font "Arial" ))
 		(line (pt 216 192)(pt 200 192)(line_width 3))
+	)
+	(port
+		(pt 216 208)
+		(output)
+		(text "I_C_DBG[2..0]" (rect 0 0 61 12)(font "Arial" ))
+		(text "I_C_DBG[2..0]" (rect 134 203 195 215)(font "Arial" ))
+		(line (pt 216 208)(pt 200 208)(line_width 3))
 	)
 	(port
 		(pt 216 32)
